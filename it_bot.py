@@ -1,10 +1,36 @@
 from aiogram import Bot, Dispatcher, types, executor
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher.storage import FSMContext
+from aiogram.dispatcher.filters.state import State, StatesGroup
 from logging import basicConfig, INFO
 from config import token 
+import sqlite3, time, uuid
 
 bot = Bot(token=token)
-dp = Dispatcher(bot)
+storage = MemoryStorage()
+dp = Dispatcher(bot, storage=storage)
 basicConfig(level=INFO)
+connection = sqlite3.connect('client.db')
+cursor = connection.cursor()
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users(
+    id INT,
+    username VARCHAR(200),
+    first_name VARCHAR(200),
+    last_name VARCHAR(200),
+    created VARCHAR(100)
+);
+""")
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS receipt(
+    payment_code INT,
+    first_name VARCHAR(200),
+    last_name VARCHAR(200),
+    direction VARCHAR(200),
+    amount INT,
+    date VARCHAR(100)
+);
+""")
 
 start_buttons = [
     types.KeyboardButton('О нас'),
@@ -14,9 +40,21 @@ start_buttons = [
 ]
 start_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True).add(*start_buttons)
 
+"Нужно собирать данные пользователя в таблицу users, при использовании команды /start. Если пользователь есть в таблице, то его не записываете. В случаи если его нету, то записываете. В начале проверяте есть ли это пользователь в базе"
+"SELECT id FROM users WHERE id = {message.from_user.id};"
+"result = cursor.fetchall()"
+"if result == []"
+
 @dp.message_handler(commands='start')
-async def start(message:types.Message):
-    await message.answer("Привет, добро пожаловать в курсы Geeks!", reply_markup=start_keyboard)
+async def start(message: types.Message):
+    cursor.execute("SELECT * FROM users WHERE username = ?", (message.from_user.username,))
+    existing_user = cursor.fetchone()
+
+    if existing_user is None:
+        cursor.execute("INSERT INTO users (id,username, first_name, last_name, created) VALUES (?, ?, ?, ?, ?);",
+                   (message.from_user.id, message.from_user.username, message.from_user.first_name, message.from_user.last_name, time.ctime()))
+    connection.commit()
+    await message.answer("Привет, добро пожаловать в курсы Geeks", reply_markup=start_keyboard)
 
 @dp.message_handler(text="О нас")
 async def about_us(message:types.Message):
@@ -70,5 +108,54 @@ async def uxui(message:types.Message):
 @dp.message_handler(text="Назад")
 async def cancell(message:types.Message):
     await start(message)
+
+class ReceiptState(StatesGroup):
+    first_name = State()
+    last_name = State()
+    direction = State()
+    amount = State()
+
+@dp.message_handler(commands='receipt')
+async def get_receipt(message:types.Message):
+    await message.answer("Для генерации чека введите следующие данные:\n(Имя, Фамилия, Направление, Сумма)")
+    await message.answer("Введите свое имя:")
+    await ReceiptState.first_name.set()
+
+@dp.message_handler(state=ReceiptState.first_name)
+async def get_last_name(message:types.Message, state:FSMContext):
+    await state.update_data(first_name=message.text)
+    await message.answer("Введите свою фамилию:")
+    await ReceiptState.last_name.set()
+
+@dp.message_handler(state=ReceiptState.last_name)
+async def get_direction(message:types.Message, state:FSMContext):
+    await state.update_data(last_name=message.text)
+    await message.answer("Введите свое направление:")
+    await ReceiptState.direction.set()
+
+@dp.message_handler(state=ReceiptState.direction)
+async def get_amount(message:types.Message, state:FSMContext):
+    await state.update_data(direction=message.text)
+    await message.answer("Введите сумму оплаты:")
+    await ReceiptState.amount.set()
+
+@dp.message_handler(state=ReceiptState.amount)
+async def generate_receipt(message:types.Message, state:FSMContext):
+    await state.update_data(amount=message.text)
+    result = await storage.get_data(user=message.from_user.id)
+    generate_payment_code = int(str(uuid.uuid4().int)[:10])
+    print(generate_payment_code)
+    print(result)
+    cursor.execute(f"""INSERT INTO receipt (payment_code, first_name, last_name, direction, amount, date)
+                   VALUES (?, ?, ?, ?, ?, ?);""", 
+                   (generate_payment_code, result['first_name'], result['last_name'],
+                    result['direction'], result['amount'], time.ctime()))
+    connection.commit()
+    await message.answer("Данные успешно записаны в базу данных")
+    await message.answer("Генерирую PDF файл...")
+
+@dp.message_handler()
+async def not_found(message:types.Message):
+    await message.reply("Я вас не понял, введите /start")
 
 executor.start_polling(dp)
