@@ -2,9 +2,11 @@ from aiogram import Bot, Dispatcher, types, executor
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher.storage import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
 from logging import basicConfig, INFO
 from config import token 
-import sqlite3, time, uuid
+import sqlite3, time, uuid, os
 
 bot = Bot(token=token)
 storage = MemoryStorage()
@@ -152,8 +154,32 @@ async def generate_receipt(message:types.Message, state:FSMContext):
                     result['direction'], result['amount'], time.ctime()))
     connection.commit()
     await message.answer("Данные успешно записаны в базу данных")
+    await message.answer(f"""Чек об оплате курса {result['direction']}
+Имя: {result['first_name']}
+Фамилия: {result['last_name']}
+Код оплаты: {generate_payment_code}
+Дата: {time.ctime()}""")
     await message.answer("Генерирую PDF файл...")
 
+    # Генерация PDF-файла
+    pdf_filename = f"receipt_{generate_payment_code}.pdf"
+    c = canvas.Canvas(pdf_filename, pagesize=letter)
+    c.drawString(100, 750, f"Direction: {result['direction']}")
+    c.drawString(100, 730, f"First Name: {result['first_name']}")
+    c.drawString(100, 710, f"Last Name: {result['last_name']}")
+    c.drawString(100, 690, f"Payment Code: {generate_payment_code}")
+    c.drawString(100, 670, f"Date: {time.ctime()}")
+    c.save()
+
+    await message.answer("PDF файл с чеком успешно сгенерирован")
+
+    # Отправка PDF-файла пользователю
+    with open(pdf_filename, 'rb') as pdf_file:
+        await message.answer_document(pdf_file)
+
+    # Удаление временного PDF-файла
+    os.remove(pdf_filename)
+    
 @dp.message_handler()
 async def not_found(message:types.Message):
     await message.reply("Я вас не понял, введите /start")
