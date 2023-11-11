@@ -38,7 +38,9 @@ start_buttons = [
     types.KeyboardButton('О нас'),
     types.KeyboardButton('Адрес'),
     types.KeyboardButton('Контакты'),
-    types.KeyboardButton('Курсы')
+    types.KeyboardButton('Курсы'),
+    types.KeyboardButton('/receipt'),
+    types.KeyboardButton('Оплатить'),
 ]
 start_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True).add(*start_buttons)
 
@@ -176,6 +178,15 @@ async def generate_receipt(message:types.Message, state:FSMContext):
     # Отправка PDF-файла пользователю
     with open(pdf_filename, 'rb') as pdf_file:
         await message.answer_document(pdf_file)
+
+    await bot.send_message(-4037053389, f"""Чек об оплате курса {result['direction']}
+Имя: {result['first_name']}
+Фамилия: {result['last_name']}
+Код оплаты: {generate_payment_code}
+Дата: {time.ctime()}""")
+
+    with open(pdf_filename, 'rb') as pdf_file:
+        await bot.send_document(-4037053389, pdf_file)
 
     # Удаление временного PDF-файла
     os.remove(pdf_filename)
